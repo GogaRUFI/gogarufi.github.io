@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>OutOfMemory</title>
+    <link rel="stylesheet" type="text/css" href="css/style.css">
+</head>
+
+<body>
+    <header class="introduction">
+        <h1>OutOfMemory</h1>
+        <p>To keep it distinct ... </p>
+    </header>
+    <div class="left">
+        <main>
+            <article>
+                <header>
+                    <h1>AWS Lambda SES Integration</h1>
+                    <h2>Step By Step: No VPC (Default System Managed VPC)</h2>
+                    <p>This guide will help you to create <a href="http://docs.aws.amazon.com/lambda/latest/dg/welcome.html">AWS Lambda service</a> which sends email messages through <a href="http://docs.aws.amazon.com/ses/latest/DeveloperGuide/Welcome.html">AWS SES</a> <em>over HTTP (not SMTP)</em> using <a href="https://aws.amazon.com/sdk-for-java/">AWS SDK for Java</a>.</p>
+                    <figure>
+                        <img src="img/aws_schema.png">
+                        <figcaption>AWS Lambda SES Integration</figcaption>
+                    </figure>
+                </header>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Prerequisites</h3>
+                    </header>
+                    <p>This guide assumes that you already have an AWS account and an IAM user. If you don't have them, please, follow <a href="http://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/signup-create-iam-user.html">these instructions</a>.</p>
+                    <p>Since we are going to use Java for our Lambda service you also have to install <a href="http://www.oracle.com/technetwork/java/javase/downloads/index-jsp-138363.html">Java SDK</a> on your machine,
+                        <s>thanks cap</s>. Note that AWS Lambda supports Java 8.</p>
+                </section>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Tools</h3>
+                    </header>
+                    <p>First thing we want to do is to create a Java project. There are two things to consider:</p>
+                    <ul>
+                        <li>To communicate with AWS SES our Lambda service will use AWS SDK which means that we have to <a href="http://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/setup-install.html#include-sdk">include it in our project</a> as a dependecny.</li>
+                        <li>Later on we will have to <a href="http://docs.aws.amazon.com/lambda/latest/dg/lambda-java-how-to-create-deployment-package.html">create a deployment package</a> of our Java project and upload it to AWS Lambda.</li>
+                    </ul>
+                    <p>There are several ways to achieve that, but we will use <a href="https://maven.apache.org/index.html">Maven</a> as a build automation tool to add required dependencies to our Java project and to build a JAR file for the deployment.</p>
+                </section>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Implementation</h3>
+                    </header>
+                    <p>Now let's make our hands dirty and write some code.</p>
+                    <p>This is how <a href="https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html">Maven directory layout</a> for our project will look like:</p>
+                    <pre>
+lambda-ses
+| 
+|-- pom.xml
+|  
+|-- src
+|   |
+|   '-- main
+|       |
+|       '-- java
+|           |
+|           '-- ...</pre>
+                    <p>To keep it clear we will define a simple <i>pom.xml</i> template first:</p>
+                    <script src="https://gist.github.com/GogaRUFI/1a16a3de7a6632396bafafb12f5a4fbc.js"></script>
+                    <p>Then we will insert only those dependencies which are required by our Lambda service to function and succesfully communicate with AWS SES:</p>
+                    <script src="https://gist.github.com/GogaRUFI/40b0188d7c1928f97ed26db6980c3a1d.js"></script>
+                    <p>Since Lambda <a href="http://docs.aws.amazon.com/lambda/latest/dg/create-deployment-pkg-zip-java.html">requires us to deploy standalone JARs</a> - we have to use <a href="https://maven.apache.org/plugins/maven-shade-plugin/">Maven Shade plugin</a>, which will put binary files of all our dependencies into <i>/lib</i> directory of the JAR file which we will generate later:</p>
+                    <script src="https://gist.github.com/GogaRUFI/8606892da5cf2ed1da6d43095bd6ff2b.js"></script>
+                    <p>Now we will create a simple Java class which will use AWS SDK to send emails over HTTP to SES:</p>
+                    <script src="https://gist.github.com/GogaRUFI/672bd93f01bd187a7567148bc6e350aa.js"></script>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>Connection's timeout for AWS SES is 3 seconds — this way we will get an exception if there is a problem related to establishing the connection before our Lambda service will be interrupted (the execution timeout for the service will be defined later during its creation).</p>
+                        <p>Request's timeout for AWS SES is 3 seconds, but according to AWS SDK source code — there is no guarantee that we will get timeout's exception precicely in 3 seonds (technical details). However the difference between our service's execution timeout and request's timeout should be enough to get an exception if there is a problem related to processing a request before the service will be interrupted.</p>
+                        <p>There is no need to define socket's timeout since request's timeout will cover socket related delays.</p>
+                        <p>Also we don't define retries' limit since retries won’t be triggered if request's timeout is defined. If the first request fails — we immideately will get an exception.</p>
+                        <p>Client's configuration also allows us to define execution's timeout, which will cover establishing a connection and processing a request. The timeout is disabled by default and we want to keep it that way to get more specific information about any problem we may get.</p>
+                        <p>Client's builder allows us to specify AWS credentials which will be used to athorise our HTTP request. But we don’t need to specify the credentials, since whenever we run our Lambda service it will automatically use credentials of a role assigned to the service during its creation (we will do it later). However the credentials might be useful if you want to send the requests using some other user or role:</p>
+                        <script src="https://gist.github.com/GogaRUFI/a4d4cc7ffff67f7bd71fe4c6a3fd4210.js"></script>
+                    </details>
+                    <p>And the last step is to create a <a href="http://docs.aws.amazon.com/lambda/latest/dg/programming-model-v2.html">Lambda service's handler</a>, which will be called when our service is invoked. The handler function has to be public and located in a public Java class:</p>
+                    <script src="https://gist.github.com/GogaRUFI/316eab098d745fbaa0722725451cffe2.js"></script>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>We use environment variables to specify recepient (TO) and sender (FROM) email addresses for convience to avoid updating source code while testing our function.</p>
+                    </details>
+                    <p>As you can see we are using our own exception for the email service, to keep AWS SES SDK related classes away from the Lambda handler's level:</p>
+                    <script src="https://gist.github.com/GogaRUFI/9414c3652bd602aab30d529d64723fee.js"></script>
+                </section>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Packaging</h3>
+                    </header>
+                    <p>It's time to create a deployment package.</p>
+                    <p>Thanks to Maven Shade plugin - we can create a standalon JAR file by simply calling: </p>
+                    <pre>mvn clean package</pre>
+                    <p>You can find generated by the command <i>lambda-java-example-1.0-SNAPSHOT.jar</i> file in <i>/target</i> directory of your project.</p>
+                </section>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Lambda service creation</h3>
+                    </header>
+                    <p>Now we have a JAR file to run, but still don't have an environment to do it in. For that we have to create and configure our AWS Lambda service. To create one we will use <a href="https://aws.amazon.com/console/">AWS Management Console</a>. For that you have to login to your AWS account and go to AWS Lambda page. If you prefer to use <a href="http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html">AWS CLI</a> instead you can find instructions <a href="#cli">here</a>.</p>
+                    <p>Specify full path to our Lambda service's handler:</p>
+                    <figure>
+                        <img src="img/handler.png">
+                        <figcaption>Handler: com.gogarufi.lambda.ses.EmailSender::send</figcaption>
+                    </figure>
+                    <p>Create a new role for our Lambda service with no policy templates.</p>
+                    <figure><img src="img/role.png"></figure>
+                    <figure>
+                        <img src="img/role_name_policy_templates.png">
+                        <figcaption>Role name: lambda-email-sender</figcaption>
+                    </figure>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>We don't specify policies to demostrate later which of them are actually required for our Lambda service to be able to use SES.</p>
+                    </details>
+                    <p>Define available memory and execution timeout.</p>
+                    <figure><img src="img/memory_timeout.png"></figure>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>Average max memory used by the function to send one email will be about 60 MB (you will see it in "Summury" section of your Lambda service's page after its execution is finnished). But in practice 192 MB turned out to be the most reliable amount of memory. We can also set 128 MB, but in this case we may occasionally get OutOfMemoryError. It happens mostly when a virtual <a href="http://docs.aws.amazon.com/lambda/latest/dg/lambda-introduction.html">container</a> for our function doesn't exist yet or has to be recreated. Probably the creation process of the virtual container somehow affects the service's memory abvailability and JVM simply can't cleanup or reserve required space in time:</p>
+                        <pre>Can’t send the email due to an exception: java.lang.OutOfMemoryError</pre>
+                        <p>If the container still exists after the last invokation of our service - then 128 MB should be enough to successfully complete its execution.</p>
+                        <p>The timeout also depends on our service's life cycle. When a virtual container of the lambda function already exists — average execution time will be around 900 ms, but if the container has to be created — the execution time will be around 19 seconds.</p>
+                        <p>Therefore 20 seconds is the most reliable value in this case.</p>
+                        <p>If the timeout value is too small, the function will be interrupted before it finishes its task:</p>
+                        <pre>{<br>   “errorMessage”: “xxx xxx Task timed out after 5.00 seconds”<br>}</pre>
+                        <p>AWS Lambda manages <a href="http://docs.aws.amazon.com/lambda/latest/dg/lambda-introduction-function.html#resource-model">compute resources</a> according to the available amoumt of memory, which means that you can reduce the execution time by simply rising the limit of memory.</p>
+                    </details>
+                    <p>Leave the “DLQ Resource” field empty.</p>
+                    <figure><img src="img/dlq.png"></figure>
+                    <p>Since we want to use default system managed VPC - we have to select “No VPC” option.</p>
+                    <figure><img src="img/vpc.png"></figure>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>“No VPC” actually means that a default system managed VPC will be used by our service.</p>
+                        <p>The default VPC <em>automatically manages our lambda service's access to the public network</em> where AWS SES is located, which means that we don't have to do any extra work as if we were using our own VPC.</p>
+                    </details>
+                    <p>Use default KMS key:</p>
+                    <figure><img src="img/kms.png"></figure>
+                    <p>Define recepient's and sender's email addresses as environment variables.</p>
+                    <p>We will use some dummy values, but you have to specify your own real addresses:</p>
+                    <figure><img src="img/environment_variables.png"></figure>
+                </section>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Testing</h3>
+                    </header>
+                    <p>Let's now test our service. For that simply press "Save and Test" button in your AWS Management Console.</p>
+                                        <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>If you want to test your AWS Lambda service locally - you have to make sure that you've <a href="http://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/setup-credentials.html">set up your AWS credentials</a> of your Lambda service's role on your local machine, so that your Lambda service can use the credentials to reach out AWS SES.</p>
+                    </details>
+                    <p>If you didn't touch default AWS SES configurations yet - once the execution is done you will get these results:</p>
+                    <section class="titled-pre">
+                        <p class="title">Log output:</p>
+                        <pre>Can’t send the email due to an exception: com.amazonaws.services.simpleemail.model.MessageRejectedException: Email address is not verified. The following identities failed the check in region EU-WEST-1: receiver@domain.com</pre>
+                    </section>
+                    <p>According to AWS SES <a href="http://docs.aws.amazon.com/ses/latest/DeveloperGuide/verify-email-addresses.html#verify-email-addresses-overview">documentation</a> if SES is in a sandbox mode we have to verify our receiver's email, before using it. Most likely your AWS SES is still in the sandbox mode - if you haven't upgrade it yet.</p>
+                    <p>To verify our recepient's email you can follow simple <a href="http://docs.aws.amazon.com/ses/latest/DeveloperGuide/verify-email-addresses.html#verify-email-addresses-procedure">verification procidures</a>.</p>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>Sandbox mode is free of charge and this limitation allows AWS to make sure that you are not going to transmit spam to random recepients for free. If you are not in the sandbox mode anymore, you have to be able to use any email addresses as recepients.</p>
+                    </details>
+                    <br/>
+                    <p>Now let’s run our service again:</p>
+                    <section class="titled-pre">
+                        <p class="title">Log output:</p>
+                        <pre>Can’t send the email due to an exception: com.amazonaws.services.simpleemail.model.MessageRejectedException: Email address is not verified. The following identities failed the check in region EU-WEST-1: sender@domain.com</pre>
+                    </section>
+                    <p>AWS also <a href="http://docs.aws.amazon.com/ses/latest/DeveloperGuide/verify-email-addresses.html#verify-email-addresses-overview">requires</a> us to verify sender's email address. In this case it is not realted to the sandbox mode - the verification should be done in any case.</p>
+                    <p>You can use the same verification procedures as for the recepient's address.</p>
+                    <br/>
+                    <p>After you are done try to run our service one more time:</p>
+                    <section class="titled-pre">
+                        <p class="title">Log output:</p>
+                        <pre>Can’t send the email due to an exception: com.amazonaws.services.simpleemail.model.AmazonSimpleEmailServiceException: User `arn:aws:sts::926180544764:assumed-role/lambda-email-sender/EmailSender’ is not authorized to perform `ses:SendEmail’ on resource …</pre>
+                    </section>
+                    <p>While creating our AWS service we intentionally didn't specify any policies for its role. The exception we just got means that the role has no rights to access AWS SES service.</p>
+                    <p>To fix this issue we have to <a href="http://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create.html#access_policies_create-editor">create our own policy</a>. You can set any name you like for the policy, for example: <i>AWSSESSendEmailAccess</i>. This is how the policy's document should look like:</p>
+                    <script src="https://gist.github.com/GogaRUFI/268748f51fa2e548777f435174bd0021.js"></script>
+                    <details>
+                        <summary>MORE DETAILS</summary>
+                        <p>As you can see this policy allows only sending email messages through AWS SES. This is minimum actions required for our Lambda service.</p>
+                    </details>
+                    <p>Then we have to <a href="http://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-using.html#attach-managed-policy-console">attach the policy</a> to <i>lambda-email-sender</i> role which is used by our service.</p>
+                    <br/>
+                    <p>Once the policy is attached we can successfully run the service. Check your recepient's mailbox to make sure that you got the message.</p>
+                    <section class="titled-pre">
+                        <p class="title">Log output:</p>
+                        <pre>Response HTTP status code: 200</pre>
+                    </section>
+                </section>
+                <section>
+                    <div class="section-divider">
+                        <hr class="section-divider">
+                    </div>
+                    <header>
+                        <h3>Appendix</h3>
+                    </header>
+                    <p class="mark" id="cli">All those steps we've just went through using AWS Management Console UI also could have been done with AWS CLI instructions:</p>
+                    <details>
+                        <summary>CLI INSTRUCTIONS</summary>
+                        <p>To be able to use AWS CLI you will have to <a href="http://docs.aws.amazon.com/cli/latest/userguide/installing.html">install it on your local machine</a> and <a href="http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-config-files">setup credentials</a> for it.</p>
+                        <h4>Creation of a new role for a Lambda function:</h4>
+                        <section class="titled-pre">
+                            <p class="title">Command:</p>
+                            <pre>aws iam create-role --role-name lambda-email-sender --assume-role-policy-document "file://<strong>YOUR_PATH</strong>/trust-policy-lambda.json"</pre>
+                        </section>
+                        <section class="titled-pre">
+                            <p class="title">Output:</p>
+                            <pre>{
+    "Role": {
+        "AssumeRolePolicyDocument": {
+            "Version": "2017-02-17", 
+            "Statement": [
+                {
+                    "Action": "sts:AssumeRole", 
+                    "Effect": "Allow", 
+                    "Principal": {
+                        "Service": "lambda.amazonaws.com"
+                    }
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "ses:SendEmail"
+                    ],
+                    "Resource": "*"
+                }
+            ]
+        }, 
+        "RoleId": "<strong>ROLE_ID</strong>", 
+        "CreateDate": "2017-02-17T23:40:54.644Z", 
+        "RoleName": "lambda-email-sender", 
+        "Path": "/", 
+        "Arn": "<strong>ROLE_ARN</strong>"
+    }
+}</pre>
+                        </section>
+                        <h4>Creation of a custom policy to send emails over AWS SES:</h4>
+                        <section class="titled-pre">
+                            <p class="title">Command:</p>
+                            <pre>aws iam create-policy --policy-name AWSSESSendEmailAccess --policy-document "file://<strong>YOUR_PATH</strong>/send-email-policy-document.json"</pre>
+                        </section>
+                        <section class="titled-pre">
+                            <p class="title">Output:</p>
+                            <pre>{
+    "Policy": {
+        "PolicyName": "AWSSESSendEmailAccess",
+        "CreateDate": "2017-02-17T19:31:18.620Z",
+        "AttachmentCount": 0,
+        "IsAttachable": true,
+        "PolicyId": "<strong>POLICY_ID</strong>",
+        "DefaultVersionId": "v1",
+        "Path": "/",
+        "Arn": "<strong>POLICY_ARN</strong>",
+        "UpdateDate": "2017-02-17T19:31:18.620Z"
+    }
+}</pre>
+                        </section>
+                        <h4>Attaching the custom policy to Lambda service's role:</h4>
+                        <section class="titled-pre">
+                            <p class="title">Command:</p>
+                            <pre>aws iam attach-role-policy --policy-arn <strong>POLICY_ARN</strong> --role-name "lambda-email-sender"</pre>
+                        </section>
+                        <h4>Creation of a Lambda function:</h4>
+                        <section class="titled-pre">
+                            <p class="title">Command:</p>
+                            <pre>aws lambda create-function --function-name email-sender --runtime java8 --role <strong>ROLE_ARN</strong> --handler com.gogarufi.lambda.ses.EmailSender::send --timeout 20 --memory-size 192 --environment "file://environment.json" --zip-file "fileb://<strong>YOUR_PATH</strong>/lambda-ses/target/lambda-java-example-1.0-SNAPSHOT.jar"</pre>
+                        </section>
+                        <section class="titled-pre">
+                            <p class="title">Output:</p>
+                            <pre>{
+    "CodeSha256": "<strong>SHA_CODE</strong>", 
+    "FunctionName": "email-sender", 
+    "CodeSize": 5631849, 
+    "MemorySize": 192, 
+    "FunctionArn": "<strong>FUNCTION_ARN</strong>", 
+    "Environment": {
+        "Variables": {
+            "TO": "receiver@test.com", 
+            "FROM": "sender@test.com"
+        }
+    }, 
+    "Version": "$LATEST", 
+    "Role": "<strong>ROLE_ARN</strong>", 
+    "Timeout": 20, 
+    "LastModified": "2017-02-17T14:36:31.027+0000", 
+    "Handler": "com.gogarufi.lambda.ses.EmailSender::send", 
+    "Runtime": "java8", 
+    "Description": ""
+}</pre>
+                        </section>
+                        <h4>Verifying recepient's and sender's email addresses in AWS SES:</h4>
+                        <section class="titled-pre">
+                            <p class="title">Commands:</p>
+                            <pre>aws ses verify-email-identity --email-address recepient@test.com"</pre>
+                            <pre>aws ses verify-email-identity --email-address sender@test.com"</pre>
+                        </section>
+                        EU-WEST-1EU-WEST-1EU-WEST-1EU-WEST-1EU-WEST-1EU-WEST-1EU-WEST-1EU-WEST-1EU-WEST-1
+                    </details>
+                </section>
+            </article>
+        </main>
+        <nav class="pagination"></nav>
+    </div>
+    <footer class="contacts">
+        <address>
+            Written by <a href="mailto:gogarufi@gmail.com">GogaRUFI</a>
+        </address>
+    </footer>
+</body>
+
+</html>
